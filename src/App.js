@@ -41,8 +41,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// De enige mock data die we nog nodig hebben is voor de favorieten op de profielpagina.
-// Dit wordt later vervangen door een slimmere data-ophaling.
+// Tijdelijke mock data voor de favorieten op de profielpagina.
 const mockGamesForProfile = [
     { id: '920587237', title: 'Adopt Me!', icon: 'https://placehold.co/150/7E22CE/FFFFFF?text=A' },
     { id: '1537690962', title: 'Brookhaven RP', icon: 'https://placehold.co/150/16A34A/FFFFFF?text=B' },
@@ -144,7 +143,7 @@ function Header({ user, onLoginClick, navigate, currentView }) {
     );
 }
 
-// BIJGEWERKT: GameList roept nu de CORS proxy aan
+// GECORRIGEERD: GameList met correcte data parsing
 function GameList({ onSelectGame }) {
     const [games, setGames] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -156,32 +155,35 @@ function GameList({ onSelectGame }) {
         setLoading(true);
         setError(null);
         
-        let robloxApiUrl = term 
+        const robloxApiUrl = term 
             ? `https://games.roblox.com/v1/games/list?model.keyword=${encodeURIComponent(term)}`
             : 'https://games.roblox.com/v1/games/list?model.sortToken=';
         
-        // Gebruik de publieke CORS proxy
-        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(robloxApiUrl)}`;
+        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(robloxApiUrl)}`;
 
         try {
             const response = await fetch(proxyUrl);
             if (!response.ok) throw new Error(`HTTP fout! Status: ${response.status}`);
             
-            const data = await response.json();
-            const initialGames = data.games || [];
+            const proxiedData = await response.json();
+            // De echte data zit in de 'contents' eigenschap als een string, dus we moeten die parsen.
+            const robloxData = JSON.parse(proxiedData.contents);
+            const initialGames = robloxData.games || [];
 
             if (initialGames.length === 0) {
                 setGames([]);
+                setLoading(false);
                 return;
             }
 
             const universeIds = initialGames.map(g => g.universeId).join(',');
-            const thumbnailsProxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(`https://thumbnails.roblox.com/v1/games/icons?universeIds=${universeIds}&size=256x256&format=Png&isCircular=false`)}`;
+            const thumbnailsProxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(`https://thumbnails.roblox.com/v1/games/icons?universeIds=${universeIds}&size=256x256&format=Png&isCircular=false`)}`;
             
             const thumbnailsResponse = await fetch(thumbnailsProxyUrl);
             if (!thumbnailsResponse.ok) throw new Error(`Thumbnails HTTP fout! Status: ${thumbnailsResponse.status}`);
             
-            const thumbnailsData = await thumbnailsResponse.json();
+            const proxiedThumbnailsData = await thumbnailsResponse.json();
+            const thumbnailsData = JSON.parse(proxiedThumbnailsData.contents);
             const thumbnails = thumbnailsData.data || [];
 
             const enrichedGames = initialGames.map(game => {
@@ -200,7 +202,8 @@ function GameList({ onSelectGame }) {
             
             setGames(enrichedGames);
         } catch (err) {
-            setError(err.message);
+            setError("Kon games niet laden van Roblox. De API is mogelijk tijdelijk onbereikbaar.");
+            console.error(err);
         } finally {
             setLoading(false);
         }
@@ -232,7 +235,7 @@ function GameList({ onSelectGame }) {
     );
 }
 
-// Resterende componenten zijn grotendeels onveranderd
+// De overige componenten zijn grotendeels onveranderd
 function GameCard({ game, onSelectGame }) { return ( <div onClick={() => onSelectGame(game)} className="overflow-hidden transition-transform duration-200 transform bg-gray-800 rounded-lg shadow-lg cursor-pointer group hover:-translate-y-1 hover:shadow-purple-500/20"><img src={game.icon} alt={game.title} className="object-cover w-full bg-gray-700 aspect-square" /><div className="p-4"><h3 className="text-lg font-bold transition-colors truncate group-hover:text-purple-400">{game.title}</h3><p className="text-sm text-gray-400 truncate">{game.developer}</p><div className="flex items-center justify-between mt-3 text-xs text-gray-300"><span className="flex items-center gap-1"><Users size={14} /> {game.players ? game.players.toLocaleString() : 'N/A'}</span><span className="px-2 py-0.5 text-purple-300 rounded-full bg-purple-500/20">{game.genre || 'Onbekend'}</span></div></div></div>); }
 function GameDetail({ game, user, onLoginClick, navigate }) { const [activeTab, setActiveTab] = useState('reviews'); const isFavorited = user?.profile?.favorites?.includes(game.id); const handleFavoriteToggle = async () => { if (!user) { onLoginClick(); return; } const userRef = doc(db, 'users', user.uid); await updateDoc(userRef, { favorites: isFavorited ? arrayRemove(game.id) : arrayUnion(game.id) }); }; return ( <div className="animate-fade-in"> <div className="flex flex-col gap-8 mb-8 md:flex-row"> <div className="relative flex-shrink-0"> <img src={game.icon} alt={game.title} className="w-48 h-48 rounded-lg shadow-lg bg-gray-700" /> </div> <div className="flex-grow"> <div className="flex items-start justify-between"> <h1 className="text-4xl font-bold">{game.title}</h1> <button onClick={handleFavoriteToggle} className={`p-2 rounded-full transition-colors duration-200 ${isFavorited ? 'text-pink-500 bg-pink-500/20' : 'text-gray-400 bg-gray-700 hover:bg-gray-600'}`} title={isFavorited ? "Verwijder uit favorieten" : "Voeg toe aan favorieten"}> <Heart fill={isFavorited ? 'currentColor' : 'none'} size={24} /> </button> </div> <div className="flex items-center gap-2 mt-1 text-lg text-gray-400"> <span>door {game.developer}</span> </div> <p className="max-w-2xl mt-4 text-gray-300">{game.description || "Geen beschrijving beschikbaar."}</p> <div className="flex flex-wrap gap-4 mt-4 text-sm"> <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 rounded-full"><Users size={16} /> <span>{game.players ? game.players.toLocaleString() : 'N/A'} spelers</span></div> <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 rounded-full"><ThumbsUp size={16} /> <span>{game.visits ? game.visits.toLocaleString() : 'N/A'} bezoeken</span></div> <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 rounded-full"><Gamepad2 size={16} /> <span>{game.genre || 'Onbekend'}</span></div> </div> </div> </div> <div className="mb-6 border-b border-gray-700"> <nav className="flex -mb-px space-x-8" aria-label="Tabs"> <button onClick={() => setActiveTab('reviews')} className={`py-4 px-1 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${activeTab === 'reviews' ? 'border-purple-500 text-purple-400' : 'text-gray-400 border-transparent hover:text-gray-200 hover:border-gray-500'}`}>Reviews</button> <button onClick={() => setActiveTab('chat')} className={`py-4 px-1 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${activeTab === 'chat' ? 'border-purple-500 text-purple-400' : 'text-gray-400 border-transparent hover:text-gray-200 hover:border-gray-500'}`}>Community Chat</button> </nav> </div> <div> {activeTab === 'reviews' && <ReviewSection game={game} user={user} onLoginClick={onLoginClick} navigate={navigate} />} {activeTab === 'chat' && <ChatSection game={game} user={user} onLoginClick={onLoginClick} />} </div> </div> ); }
 function ReviewSection({ game, user, onLoginClick, navigate }) { const [reviews, setReviews] = useState([]); const [loading, setLoading] = useState(true); const [sortBy, setSortBy] = useState('upvotes'); useEffect(() => { const q = query(collection(db, `games/${game.id}/reviews`), orderBy("timestamp", "desc")); const unsubscribe = onSnapshot(q, (querySnapshot) => { let reviewsData = []; querySnapshot.forEach((doc) => reviewsData.push({ id: doc.id, ...doc.data() })); if (sortBy === 'upvotes') { reviewsData.sort((a, b) => ((b.upvotedBy?.length || 0) - (b.downvotedBy?.length || 0)) - ((a.upvotedBy?.length || 0) - (a.downvotedBy?.length || 0))); } setReviews(reviewsData); setLoading(false); }); return () => unsubscribe(); }, [game.id, sortBy]); const avgRating = reviews.length > 0 ? (reviews.reduce((acc, r) => acc + r.rating, 0) / reviews.length).toFixed(1) : 'N/A'; return ( <div> <div className="flex flex-col gap-4 p-4 mb-6 bg-gray-800 rounded-lg sm:flex-row justify-between items-center"> <div className="flex items-center gap-2 text-2xl font-bold text-yellow-400"> <Star fill="currentColor" /> <span>Gemiddelde score: {avgRating}</span> </div> <div> <span className="mr-2 text-sm text-gray-400">Sorteer op:</span> <button onClick={() => setSortBy('upvotes')} className={`px-3 py-1 text-sm rounded-l-md ${sortBy === 'upvotes' ? 'bg-purple-600' : 'bg-gray-700 hover:bg-gray-600'}`}>Top</button> <button onClick={() => setSortBy('timestamp')} className={`px-3 py-1 text-sm rounded-r-md ${sortBy === 'timestamp' ? 'bg-purple-600' : 'bg-gray-700 hover:bg-gray-600'}`}>Nieuwste</button> </div> </div> <ReviewForm game={game} user={user} onLoginClick={onLoginClick} /> {loading ? <p>Reviews laden...</p> : reviews.length === 0 ? ( <p className="py-8 text-center text-gray-400">Nog geen reviews. Wees de eerste!</p> ) : ( <div className="space-y-6"> {reviews.map(review => <Review key={review.id} review={review} gameId={game.id} user={user} onLoginClick={onLoginClick} navigate={navigate} />)} </div> )} </div> ); }
