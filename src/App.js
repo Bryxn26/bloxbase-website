@@ -27,7 +27,6 @@ import {
 } from 'firebase/firestore';
 import { Star, Send, Users, Gamepad2, ThumbsUp, MessageSquare, Search, X, User, LogOut, ChevronLeft, Edit, CheckCircle, MoreVertical, Heart, Loader } from 'lucide-react';
 
-// Jouw persoonlijke Firebase configuratie
 const firebaseConfig = {
   apiKey: "AIzaSyC0R76H2CyYxpDFXggBTE7iSJ-QCHfWyOY",
   authDomain: "bloxbase-fbad8.firebaseapp.com",
@@ -39,40 +38,30 @@ const firebaseConfig = {
   measurementId: "G-XJHP0BRW5M"
 };
 
-// --- Firebase Initialisatie ---
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// --- Statische Game Data ---
-// We gebruiken deze stabiele data. Dit lost alle 'Failed to fetch' en performance problemen op.
+// Mock data wordt niet meer gebruikt voor de gamelijst, maar nog wel voor de favorieten op de profielpagina.
+// Dit lossen we later op door game details per ID op te halen.
 const mockGames = [
-    { id: '920587237', title: 'Adopt Me!', developer: 'Uplift Games', genre: 'RPG', icon: 'https://placehold.co/150/7E22CE/FFFFFF?text=A', description: 'In Adopt Me kun je huisdieren adopteren, je huis inrichten en met vrienden spelen in een magische wereld.', visits: 30_000_000_000, players: 350000 },
-    { id: '1537690962', title: 'Brookhaven RP', developer: 'Wolfpaq', genre: 'RPG', icon: 'https://placehold.co/150/16A34A/FFFFFF?text=B', description: 'Een plek om rond te hangen met gelijkgestemde mensen. Wees wie je wilt zijn in Brookhaven.', visits: 25_000_000_000, players: 450000 },
-    { id: '2753915549', title: 'Tower of Hell', developer: 'YXCeptional Studios', genre: 'Obby', icon: 'https://placehold.co/150/DC2626/FFFFFF?text=T', description: 'Kun jij deze willekeurig gegenereerde toren beklimmen? Geen checkpoints. Pure vaardigheid.', visits: 18_000_000_000, players: 80000 },
-    { id: '6284583030', title: 'Blox Fruits', developer: 'gamer robot inc.', genre: 'Adventure', icon: 'https://placehold.co/150/3B82F6/FFFFFF?text=F', description: 'Word een meesterzwaardvechter of een krachtige Blox Fruit-gebruiker terwijl je traint om de sterkste speler ooit te worden.', visits: 15_000_000_000, players: 500000 },
-    { id: '7795794352', title: 'Pet Simulator X', developer: 'BIG Games Pets', genre: 'Simulator', icon: 'https://placehold.co/150/F97316/FFFFFF?text=P', description: 'Verzamel eieren, laat huisdieren uitkomen en ontgrendel nieuwe werelden! Honderden huisdieren om te verzamelen.', visits: 10_000_000_000, players: 120000 },
-    { id: '8737602449', title: 'DOORS', developer: 'LSPLASH', genre: 'Horror', icon: 'https://placehold.co/150/1F2937/FFFFFF?text=D', description: 'Een unieke horrorervaring met procedureel gegenereerde levels. Elke deur is een nieuwe verrassing.', visits: 5_000_000_000, players: 75000 },
-    { id: '2414851778', title: 'Murder Mystery 2', developer: 'Nikilis', genre: 'Murder Mystery', icon: 'https://placehold.co/150/F59E0B/FFFFFF?text=M', description: 'Los het mysterie op! Een onschuldige is de moordenaar, kun je overleven en de schutter ontmaskeren?', visits: 9_000_000_000, players: 65000 },
+    { id: 920587237, title: 'Adopt Me!', developer: 'Uplift Games', icon: 'https://placehold.co/150/7E22CE/FFFFFF?text=A' },
+    { id: 1537690962, title: 'Brookhaven RP', developer: 'Wolfpaq', icon: 'https://placehold.co/150/16A34A/FFFFFF?text=B' },
 ];
 
-// --- HOOFD APP COMPONENT ---
 export default function App() {
     const [user, setUser] = useState(null);
     const [loadingAuth, setLoadingAuth] = useState(true);
     const [view, setView] = useState({ type: 'home', payload: {} });
     const [showAuthModal, setShowAuthModal] = useState(false);
     
-    // GECORRIGEERD: Efficiëntere state update om UI-vertraging op te lossen
     useEffect(() => {
         let unsubscribeUser;
         const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
             if (unsubscribeUser) unsubscribeUser();
             if (currentUser) {
-                // STAP 1: Stel onmiddellijk de basisgebruiker in. Dit lost de vertraging op.
                 setUser({ ...currentUser, profile: { username: 'Laden...', favorites: [] } });
                 const userProfileRef = doc(db, 'users', currentUser.uid);
-                // STAP 2: Luister naar het profiel en update het op de achtergrond.
                 unsubscribeUser = onSnapshot(userProfileRef, (docSnap) => {
                     if (docSnap.exists()) {
                         setUser(prevUser => ({ ...prevUser, ...currentUser, profile: docSnap.data() }));
@@ -122,8 +111,6 @@ export default function App() {
     );
 }
 
-// --- Componenten ---
-
 function Header({ user, onLoginClick, navigate, currentView }) {
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const dropdownRef = useRef(null);
@@ -157,23 +144,56 @@ function Header({ user, onLoginClick, navigate, currentView }) {
     );
 }
 
+// BIJGEWERKT: GameList om de nieuwe API route aan te roepen
 function GameList({ onSelectGame }) {
+    const [games, setGames] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
-    const [genreFilter, setGenreFilter] = useState('All');
-    const genres = ['All', ...new Set(mockGames.map(g => g.genre))].sort();
-    const filteredGames = mockGames
-        .filter(game => game.title.toLowerCase().includes(searchTerm.toLowerCase()))
-        .filter(game => genreFilter === 'All' || game.genre === genreFilter);
+    const searchTimeout = useRef(null);
+
+    const fetchGames = async (term = '') => {
+        setLoading(true);
+        setError(null);
+        try {
+            // Gebruik een relatief pad, Vercel leidt dit automatisch naar de API route
+            const endpoint = term ? `/api/games?term=${term}` : '/api/games';
+            const response = await fetch(endpoint);
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || `HTTP fout! Status: ${response.status}`);
+            }
+            const data = await response.json();
+            setGames(data);
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+    
+    useEffect(() => {
+        fetchGames(); // Laad populaire games bij het opstarten
+    }, []);
+
+    const handleSearch = (e) => {
+        const term = e.target.value;
+        setSearchTerm(term);
+        if (searchTimeout.current) clearTimeout(searchTimeout.current);
+        searchTimeout.current = setTimeout(() => {
+            fetchGames(term.trim());
+        }, 500);
+    };
+
     return (
         <div>
             <div className="mb-8 text-center"><h1 className="text-4xl font-extrabold tracking-tight text-white sm:text-5xl">Ontdek Roblox Games</h1><p className="mt-4 text-lg text-gray-300">Zoek naar games of bekijk de populairste van dit moment.</p></div>
             <div className="flex flex-col gap-4 p-4 mb-6 bg-gray-800 rounded-lg sm:flex-row items-center">
-                <div className="relative flex-grow w-full"><Search className="absolute top-1/2 left-3 text-gray-400 -translate-y-1/2" size={20} /><input type="text" placeholder="Zoek een game op naam..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full py-2 pl-10 pr-4 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"/></div>
-                <div className="flex-shrink-0 w-full sm:w-auto"><select value={genreFilter} onChange={e => setGenreFilter(e.target.value)} className="w-full px-4 py-2 text-white bg-gray-700 border border-gray-600 rounded-md sm:w-auto focus:outline-none focus:ring-2 focus:ring-purple-500">{genres.map(g => <option key={g} value={g}>{g}</option>)}</select></div>
+                <div className="relative flex-grow w-full"><Search className="absolute top-1/2 left-3 text-gray-400 -translate-y-1/2" size={20} /><input type="text" placeholder="Zoek een game op naam..." value={searchTerm} onChange={handleSearch} className="w-full py-2 pl-10 pr-4 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"/></div>
             </div>
-            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-                {filteredGames.length > 0 ? (filteredGames.map(game => <GameCard key={game.id} game={game} onSelectGame={onSelectGame} />)) : (<p className="col-span-full py-10 text-center text-gray-400">Geen games gevonden.</p>)}
-            </div>
+            {loading ? (<div className="flex flex-col items-center justify-center text-center h-64"><Loader className="animate-spin text-purple-400 mb-4" size={48} /></div>) : 
+             error ? (<div className="p-6 text-center text-red-300 bg-red-500/10 rounded-lg"><h3 className="font-bold text-lg mb-2">Fout bij het laden</h3><p>{error}</p></div>) : 
+            (<div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">{games.length > 0 ? (games.map(game => <GameCard key={game.id} game={game} onSelectGame={onSelectGame} />)) : (<p className="col-span-full py-10 text-center text-gray-400">Geen games gevonden.</p>)}</div>)}
         </div>
     );
 }
