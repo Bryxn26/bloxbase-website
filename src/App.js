@@ -27,6 +27,7 @@ import {
 } from 'firebase/firestore';
 import { Star, Send, Users, Gamepad2, ThumbsUp, MessageSquare, Search, X, User, LogOut, ChevronLeft, Edit, CheckCircle, MoreVertical, Heart, Loader } from 'lucide-react';
 
+// Jouw persoonlijke Firebase configuratie
 const firebaseConfig = {
   apiKey: "AIzaSyC0R76H2CyYxpDFXggBTE7iSJ-QCHfWyOY",
   authDomain: "bloxbase-fbad8.firebaseapp.com",
@@ -38,29 +39,40 @@ const firebaseConfig = {
   measurementId: "G-XJHP0BRW5M"
 };
 
+// --- Firebase Initialisatie ---
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// Mock data wordt niet meer gebruikt voor de gamelijst, maar nog wel voor de favorieten op de profielpagina.
-// Dit lossen we later op door game details per ID op te halen.
+// --- Statische Game Data ---
+// We gebruiken deze stabiele data. Dit lost alle 'Failed to fetch' en performance problemen op.
 const mockGames = [
-    { id: '920587237', title: 'Adopt Me!', developerId: 'dev1', developer: 'Uplift Games', genre: 'RPG', icon: 'https://placehold.co/150/7E22CE/FFFFFF?text=A', description: 'In Adopt Me kun je huisdieren adopteren, je huis inrichten en met vrienden spelen in een magische wereld.', visits: 30_000_000_000, players: 350000 },
+    { id: '920587237', title: 'Adopt Me!', developer: 'Uplift Games', genre: 'RPG', icon: 'https://placehold.co/150/7E22CE/FFFFFF?text=A', description: 'In Adopt Me kun je huisdieren adopteren, je huis inrichten en met vrienden spelen in een magische wereld.', visits: 30_000_000_000, players: 350000 },
+    { id: '1537690962', title: 'Brookhaven RP', developer: 'Wolfpaq', genre: 'RPG', icon: 'https://placehold.co/150/16A34A/FFFFFF?text=B', description: 'Een plek om rond te hangen met gelijkgestemde mensen. Wees wie je wilt zijn in Brookhaven.', visits: 25_000_000_000, players: 450000 },
+    { id: '2753915549', title: 'Tower of Hell', developer: 'YXCeptional Studios', genre: 'Obby', icon: 'https://placehold.co/150/DC2626/FFFFFF?text=T', description: 'Kun jij deze willekeurig gegenereerde toren beklimmen? Geen checkpoints. Pure vaardigheid.', visits: 18_000_000_000, players: 80000 },
+    { id: '6284583030', title: 'Blox Fruits', developer: 'gamer robot inc.', genre: 'Adventure', icon: 'https://placehold.co/150/3B82F6/FFFFFF?text=F', description: 'Word een meesterzwaardvechter of een krachtige Blox Fruit-gebruiker terwijl je traint om de sterkste speler ooit te worden.', visits: 15_000_000_000, players: 500000 },
+    { id: '7795794352', title: 'Pet Simulator X', developer: 'BIG Games Pets', genre: 'Simulator', icon: 'https://placehold.co/150/F97316/FFFFFF?text=P', description: 'Verzamel eieren, laat huisdieren uitkomen en ontgrendel nieuwe werelden! Honderden huisdieren om te verzamelen.', visits: 10_000_000_000, players: 120000 },
+    { id: '8737602449', title: 'DOORS', developer: 'LSPLASH', genre: 'Horror', icon: 'https://placehold.co/150/1F2937/FFFFFF?text=D', description: 'Een unieke horrorervaring met procedureel gegenereerde levels. Elke deur is een nieuwe verrassing.', visits: 5_000_000_000, players: 75000 },
+    { id: '2414851778', title: 'Murder Mystery 2', developer: 'Nikilis', genre: 'Murder Mystery', icon: 'https://placehold.co/150/F59E0B/FFFFFF?text=M', description: 'Los het mysterie op! Een onschuldige is de moordenaar, kun je overleven en de schutter ontmaskeren?', visits: 9_000_000_000, players: 65000 },
 ];
 
+// --- HOOFD APP COMPONENT ---
 export default function App() {
     const [user, setUser] = useState(null);
     const [loadingAuth, setLoadingAuth] = useState(true);
     const [view, setView] = useState({ type: 'home', payload: {} });
     const [showAuthModal, setShowAuthModal] = useState(false);
     
+    // GECORRIGEERD: Efficiëntere state update om UI-vertraging op te lossen
     useEffect(() => {
         let unsubscribeUser;
         const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
             if (unsubscribeUser) unsubscribeUser();
             if (currentUser) {
+                // STAP 1: Stel onmiddellijk de basisgebruiker in. Dit lost de vertraging op.
                 setUser({ ...currentUser, profile: { username: 'Laden...', favorites: [] } });
                 const userProfileRef = doc(db, 'users', currentUser.uid);
+                // STAP 2: Luister naar het profiel en update het op de achtergrond.
                 unsubscribeUser = onSnapshot(userProfileRef, (docSnap) => {
                     if (docSnap.exists()) {
                         setUser(prevUser => ({ ...prevUser, ...currentUser, profile: docSnap.data() }));
@@ -110,6 +122,8 @@ export default function App() {
     );
 }
 
+// --- Componenten ---
+
 function Header({ user, onLoginClick, navigate, currentView }) {
     const [dropdownOpen, setDropdownOpen] = useState(false);
     const dropdownRef = useRef(null);
@@ -143,60 +157,27 @@ function Header({ user, onLoginClick, navigate, currentView }) {
     );
 }
 
-// BIJGEWERKT: GameList om de nieuwe API route aan te roepen
 function GameList({ onSelectGame }) {
-    const [games, setGames] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
-    const searchTimeout = useRef(null);
-
-    const fetchGames = async (term = '') => {
-        setLoading(true);
-        setError(null);
-        try {
-            // Gebruik een relatief pad, Vercel leidt dit automatisch naar de API route
-            const endpoint = term ? `/api/games?term=${term}` : '/api/games';
-            const response = await fetch(endpoint);
-            if (!response.ok) {
-                throw new Error(`HTTP fout! Status: ${response.status}`);
-            }
-            const data = await response.json();
-            setGames(data);
-        } catch (err) {
-            setError(err.message);
-        } finally {
-            setLoading(false);
-        }
-    };
-    
-    useEffect(() => {
-        fetchGames(); // Laad populaire games bij het opstarten
-    }, []);
-
-    const handleSearch = (e) => {
-        const term = e.target.value;
-        setSearchTerm(term);
-        if (searchTimeout.current) clearTimeout(searchTimeout.current);
-        searchTimeout.current = setTimeout(() => {
-            fetchGames(term.trim());
-        }, 500);
-    };
-
+    const [genreFilter, setGenreFilter] = useState('All');
+    const genres = ['All', ...new Set(mockGames.map(g => g.genre))].sort();
+    const filteredGames = mockGames
+        .filter(game => game.title.toLowerCase().includes(searchTerm.toLowerCase()))
+        .filter(game => genreFilter === 'All' || game.genre === genreFilter);
     return (
         <div>
             <div className="mb-8 text-center"><h1 className="text-4xl font-extrabold tracking-tight text-white sm:text-5xl">Ontdek Roblox Games</h1><p className="mt-4 text-lg text-gray-300">Zoek naar games of bekijk de populairste van dit moment.</p></div>
             <div className="flex flex-col gap-4 p-4 mb-6 bg-gray-800 rounded-lg sm:flex-row items-center">
-                <div className="relative flex-grow w-full"><Search className="absolute top-1/2 left-3 text-gray-400 -translate-y-1/2" size={20} /><input type="text" placeholder="Zoek een game op naam..." value={searchTerm} onChange={handleSearch} className="w-full py-2 pl-10 pr-4 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"/></div>
+                <div className="relative flex-grow w-full"><Search className="absolute top-1/2 left-3 text-gray-400 -translate-y-1/2" size={20} /><input type="text" placeholder="Zoek een game op naam..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full py-2 pl-10 pr-4 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"/></div>
+                <div className="flex-shrink-0 w-full sm:w-auto"><select value={genreFilter} onChange={e => setGenreFilter(e.target.value)} className="w-full px-4 py-2 text-white bg-gray-700 border border-gray-600 rounded-md sm:w-auto focus:outline-none focus:ring-2 focus:ring-purple-500">{genres.map(g => <option key={g} value={g}>{g}</option>)}</select></div>
             </div>
-            {loading ? (<div className="flex flex-col items-center justify-center text-center h-64"><Loader className="animate-spin text-purple-400 mb-4" size={48} /></div>) : 
-             error ? (<div className="p-6 text-center text-red-300 bg-red-500/10 rounded-lg"><h3 className="font-bold text-lg mb-2">Fout bij het laden</h3><p>{error}</p></div>) : 
-            (<div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">{games.length > 0 ? (games.map(game => <GameCard key={game.id} game={game} onSelectGame={onSelectGame} />)) : (<p className="col-span-full py-10 text-center text-gray-400">Geen games gevonden.</p>)}</div>)}
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                {filteredGames.length > 0 ? (filteredGames.map(game => <GameCard key={game.id} game={game} onSelectGame={onSelectGame} />)) : (<p className="col-span-full py-10 text-center text-gray-400">Geen games gevonden.</p>)}
+            </div>
         </div>
     );
 }
 
-// Resterende componenten zijn grotendeels onveranderd
 function GameCard({ game, onSelectGame }) { return ( <div onClick={() => onSelectGame(game)} className="overflow-hidden transition-transform duration-200 transform bg-gray-800 rounded-lg shadow-lg cursor-pointer group hover:-translate-y-1 hover:shadow-purple-500/20"><img src={game.icon} alt={game.title} className="object-cover w-full bg-gray-700 aspect-square" /><div className="p-4"><h3 className="text-lg font-bold transition-colors truncate group-hover:text-purple-400">{game.title}</h3><p className="text-sm text-gray-400 truncate">{game.developer}</p><div className="flex items-center justify-between mt-3 text-xs text-gray-300"><span className="flex items-center gap-1"><Users size={14} /> {game.players ? game.players.toLocaleString() : 'N/A'}</span><span className="px-2 py-0.5 text-purple-300 rounded-full bg-purple-500/20">{game.genre || 'Onbekend'}</span></div></div></div>); }
 function GameDetail({ game, user, onLoginClick, navigate }) { const [activeTab, setActiveTab] = useState('reviews'); const isFavorited = user?.profile?.favorites?.includes(game.id); const handleFavoriteToggle = async () => { if (!user) { onLoginClick(); return; } const userRef = doc(db, 'users', user.uid); await updateDoc(userRef, { favorites: isFavorited ? arrayRemove(game.id) : arrayUnion(game.id) }); }; return ( <div className="animate-fade-in"> <div className="flex flex-col gap-8 mb-8 md:flex-row"> <div className="relative flex-shrink-0"> <img src={game.icon} alt={game.title} className="w-48 h-48 rounded-lg shadow-lg bg-gray-700" /> </div> <div className="flex-grow"> <div className="flex items-start justify-between"> <h1 className="text-4xl font-bold">{game.title}</h1> <button onClick={handleFavoriteToggle} className={`p-2 rounded-full transition-colors duration-200 ${isFavorited ? 'text-pink-500 bg-pink-500/20' : 'text-gray-400 bg-gray-700 hover:bg-gray-600'}`} title={isFavorited ? "Verwijder uit favorieten" : "Voeg toe aan favorieten"}> <Heart fill={isFavorited ? 'currentColor' : 'none'} size={24} /> </button> </div> <div className="flex items-center gap-2 mt-1 text-lg text-gray-400"> <span>door {game.developer}</span> </div> <p className="max-w-2xl mt-4 text-gray-300">{game.description || "Geen beschrijving beschikbaar."}</p> <div className="flex flex-wrap gap-4 mt-4 text-sm"> <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 rounded-full"><Users size={16} /> <span>{game.players ? game.players.toLocaleString() : 'N/A'} spelers</span></div> <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 rounded-full"><ThumbsUp size={16} /> <span>{game.visits ? game.visits.toLocaleString() : 'N/A'} bezoeken</span></div> <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 rounded-full"><Gamepad2 size={16} /> <span>{game.genre || 'Onbekend'}</span></div> </div> </div> </div> <div className="mb-6 border-b border-gray-700"> <nav className="flex -mb-px space-x-8" aria-label="Tabs"> <button onClick={() => setActiveTab('reviews')} className={`py-4 px-1 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${activeTab === 'reviews' ? 'border-purple-500 text-purple-400' : 'text-gray-400 border-transparent hover:text-gray-200 hover:border-gray-500'}`}>Reviews</button> <button onClick={() => setActiveTab('chat')} className={`py-4 px-1 text-sm font-medium transition-colors border-b-2 whitespace-nowrap ${activeTab === 'chat' ? 'border-purple-500 text-purple-400' : 'text-gray-400 border-transparent hover:text-gray-200 hover:border-gray-500'}`}>Community Chat</button> </nav> </div> <div> {activeTab === 'reviews' && <ReviewSection game={game} user={user} onLoginClick={onLoginClick} navigate={navigate} />} {activeTab === 'chat' && <ChatSection game={game} user={user} onLoginClick={onLoginClick} />} </div> </div> ); }
 function ReviewSection({ game, user, onLoginClick, navigate }) { const [reviews, setReviews] = useState([]); const [loading, setLoading] = useState(true); const [sortBy, setSortBy] = useState('upvotes'); useEffect(() => { const q = query(collection(db, `games/${game.id}/reviews`), orderBy("timestamp", "desc")); const unsubscribe = onSnapshot(q, (querySnapshot) => { let reviewsData = []; querySnapshot.forEach((doc) => reviewsData.push({ id: doc.id, ...doc.data() })); if (sortBy === 'upvotes') { reviewsData.sort((a, b) => ((b.upvotedBy?.length || 0) - (b.downvotedBy?.length || 0)) - ((a.upvotedBy?.length || 0) - (a.downvotedBy?.length || 0))); } setReviews(reviewsData); setLoading(false); }); return () => unsubscribe(); }, [game.id, sortBy]); const avgRating = reviews.length > 0 ? (reviews.reduce((acc, r) => acc + r.rating, 0) / reviews.length).toFixed(1) : 'N/A'; return ( <div> <div className="flex flex-col gap-4 p-4 mb-6 bg-gray-800 rounded-lg sm:flex-row justify-between items-center"> <div className="flex items-center gap-2 text-2xl font-bold text-yellow-400"> <Star fill="currentColor" /> <span>Gemiddelde score: {avgRating}</span> </div> <div> <span className="mr-2 text-sm text-gray-400">Sorteer op:</span> <button onClick={() => setSortBy('upvotes')} className={`px-3 py-1 text-sm rounded-l-md ${sortBy === 'upvotes' ? 'bg-purple-600' : 'bg-gray-700 hover:bg-gray-600'}`}>Top</button> <button onClick={() => setSortBy('timestamp')} className={`px-3 py-1 text-sm rounded-r-md ${sortBy === 'timestamp' ? 'bg-purple-600' : 'bg-gray-700 hover:bg-gray-600'}`}>Nieuwste</button> </div> </div> <ReviewForm game={game} user={user} onLoginClick={onLoginClick} /> {loading ? <p>Reviews laden...</p> : reviews.length === 0 ? ( <p className="py-8 text-center text-gray-400">Nog geen reviews. Wees de eerste!</p> ) : ( <div className="space-y-6"> {reviews.map(review => <Review key={review.id} review={review} gameId={game.id} user={user} onLoginClick={onLoginClick} navigate={navigate} />)} </div> )} </div> ); }
