@@ -3,55 +3,61 @@
 const axios = require('axios');
 
 // Functie om de data van meerdere Roblox API's te combineren.
-// Dit is nodig omdat de ene API de lijst geeft, en de andere de iconen.
 const enrichGameData = async (games) => {
+    // Vang het geval op dat 'games' niet bestaat of leeg is.
     if (!games || games.length === 0) {
         return [];
     }
 
-    const universeIds = games.map(game => game.universeId).join(',');
+    // Filter ongeldige game-objecten eruit om fouten te voorkomen.
+    const validGames = games.filter(game => game && game.universeId);
+    if (validGames.length === 0) {
+        return [];
+    }
 
-    // API-eindpunten voor details en iconen
-    const detailsUrl = `https://games.roblox.com/v1/games?universeIds=${universeIds}`;
+    const universeIds = validGames.map(game => game.universeId).join(',');
+
     const thumbnailsUrl = `https://thumbnails.roblox.com/v1/games/icons?universeIds=${universeIds}&size=256x256&format=Png&isCircular=false`;
 
     try {
-        // Vraag details en thumbnails tegelijkertijd op voor snelheid
-        const [detailsResponse, thumbnailsResponse] = await Promise.all([
-            axios.get(detailsUrl),
-            axios.get(thumbnailsUrl)
-        ]);
-
-        const detailsData = detailsResponse.data.data;
+        const thumbnailsResponse = await axios.get(thumbnailsUrl);
         const thumbnailsData = thumbnailsResponse.data.data;
 
-        // Combineer alle data in één schoon object per game
-        const enrichedGames = detailsData.map(detail => {
-            const thumbnail = thumbnailsData.find(t => t.targetId === detail.id);
+        const enrichedGames = validGames.map(game => {
+            // Vind de bijbehorende thumbnail.
+            const thumbnail = thumbnailsData.find(t => t.targetId === game.universeId);
             return {
-                id: detail.id,
-                title: detail.name,
-                developer: detail.creator.name,
-                genre: detail.genre,
-                icon: thumbnail ? thumbnail.imageUrl : `https://placehold.co/150/1F2937/FFFFFF?text=${detail.name[0]}`, // Fallback
-                description: detail.description,
-                visits: detail.visits,
-                players: detail.playing,
+                id: game.universeId,
+                title: game.name || 'Onbekende Game',
+                developer: game.creatorName || 'Onbekende Ontwikkelaar',
+                genre: game.genre || 'Algemeen',
+                // Gebruik de thumbnail als deze bestaat, anders een fallback.
+                icon: thumbnail && thumbnail.imageUrl ? thumbnail.imageUrl : `https://placehold.co/150/1F2937/FFFFFF?text=${(game.name || '?')[0]}`,
+                description: game.description || 'Geen beschrijving beschikbaar.',
+                visits: game.totalUpVotes || 0, // Gebruik upvotes als stand-in, met een fallback
+                players: game.playing || 0,
             };
         });
 
         return enrichedGames;
-
     } catch (error) {
-        console.error("Fout bij het verrijken van game data:", error);
-        return []; // Geef een lege array terug bij een fout
+        console.error("Fout bij het ophalen van thumbnails:", error.message);
+        // Als thumbnails ophalen mislukt, geef dan de basisinformatie terug.
+        return validGames.map(game => ({
+            id: game.universeId,
+            title: game.name || 'Onbekende Game',
+            developer: game.creatorName || 'Onbekende Ontwikkelaar',
+            genre: game.genre || 'Algemeen',
+            icon: `https://placehold.co/150/1F2937/FFFFFF?text=${(game.name || '?')[0]}`,
+            description: game.description || 'Geen beschrijving beschikbaar.',
+            visits: game.totalUpVotes || 0,
+            players: game.playing || 0,
+        }));
     }
 };
 
-// Dit is de Vercel Serverless Function.
-// Het neemt een verzoek (req) en stuurt een antwoord (res).
 export default async function handler(req, res) {
-    // Sta verzoeken van elke origin toe (noodzakelijk voor Vercel)
+    // CORS headers om verbindingen toe te staan.
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -70,15 +76,13 @@ export default async function handler(req, res) {
     }
 
     try {
-        const response = await axios.get(robloxApiUrl);
+        const response = await axios.get(robloxApiUrl, { timeout: 5000 }); // Voeg een timeout toe
         const enrichedData = await enrichGameData(response.data.games);
         
-        // Sta caching toe voor 5 minuten om de API-limieten te respecteren
         res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         res.status(200).json(enrichedData);
-
     } catch (error) {
         console.error('Fout in API route:', error.message);
-        res.status(500).json({ message: 'Er is iets misgegaan bij het ophalen van de games.' });
+        res.status(500).json({ message: 'Kon geen games ophalen van Roblox. Probeer het later opnieuw.' });
     }
 }

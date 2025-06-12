@@ -144,7 +144,7 @@ function Header({ user, onLoginClick, navigate, currentView }) {
     );
 }
 
-// BIJGEWERKT: GameList om de nieuwe API route aan te roepen
+// BIJGEWERKT: GameList met robuustere foutafhandeling
 function GameList({ onSelectGame }) {
     const [games, setGames] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -156,12 +156,12 @@ function GameList({ onSelectGame }) {
         setLoading(true);
         setError(null);
         try {
-            // Gebruik een relatief pad, Vercel leidt dit automatisch naar de API route
             const endpoint = term ? `/api/games?term=${term}` : '/api/games';
             const response = await fetch(endpoint);
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || `HTTP fout! Status: ${response.status}`);
+                // Probeer de foutmelding van de API te lezen, anders een standaard HTTP-fout
+                const errorData = await response.json().catch(() => ({ message: `HTTP fout! Server reageerde met status: ${response.status}` }));
+                throw new Error(errorData.message);
             }
             const data = await response.json();
             setGames(data);
@@ -173,7 +173,7 @@ function GameList({ onSelectGame }) {
     };
     
     useEffect(() => {
-        fetchGames(); // Laad populaire games bij het opstarten
+        fetchGames();
     }, []);
 
     const handleSearch = (e) => {
@@ -208,7 +208,6 @@ function ReviewForm({ game, user, onLoginClick }) { const [rating, setRating] = 
 function ChatSection({ game, user, onLoginClick }) { const [messages, setMessages] = useState([]); const [newMessage, setNewMessage] = useState(''); const [sending, setSending] = useState(false); const chatEndRef = useRef(null); useEffect(() => { const q = query(collection(db, `games/${game.id}/chat`), orderBy('timestamp', 'asc')); const unsubscribe = onSnapshot(q, (querySnapshot) => { const msgs = []; querySnapshot.forEach((doc) => { msgs.push({ id: doc.id, ...doc.data() }); }); setMessages(msgs); }); return () => unsubscribe(); }, [game.id]); useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]); const handleSendMessage = async (e) => { e.preventDefault(); if (!user) { onLoginClick(); return; } if (newMessage.trim() === '') return; setSending(true); try { await addDoc(collection(db, `games/${game.id}/chat`), { userId: user.uid, username: user.profile.username, avatar: user.profile.avatar, text: newMessage, timestamp: Timestamp.now(), }); setNewMessage(''); } catch (error) { console.error("Fout bij verzenden bericht:", error); } finally { setSending(false); } }; return ( <div className="flex flex-col h-[60vh] bg-gray-800 rounded-lg"> <h2 className="p-4 text-xl font-bold border-b border-gray-700">Community Chat voor {game.title}</h2> <div className="flex-grow p-4 space-y-4 overflow-y-auto"> {messages.map(msg => ( <div key={msg.id} className="flex items-start space-x-3"> <img src={msg.avatar} alt={msg.username} className="w-10 h-10 rounded-full"/> <div> <div className="flex items-baseline space-x-2"> <p className="font-bold text-purple-400">{msg.username}</p> <p className="text-xs text-gray-500">{msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleTimeString() : ''}</p> </div> <p className="text-gray-200">{msg.text}</p> </div> </div> ))} <div ref={chatEndRef} /> </div> {user ? ( <form onSubmit={handleSendMessage} className="flex items-center gap-3 p-4 border-t border-gray-700"> <input type="text" value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="Zeg iets..." className="w-full px-4 py-2 text-white bg-gray-700 border border-gray-600 rounded-full focus:outline-none focus:ring-2 focus:ring-purple-500" /> <button type="submit" disabled={sending} className="p-3 text-white transition-colors bg-purple-600 rounded-full hover:bg-purple-700 disabled:bg-gray-500"> <Send size={20} /> </button> </form> ) : ( <div className="p-4 text-center border-t border-gray-700"> <p>Je moet <span onClick={onLoginClick} className="font-bold text-purple-400 cursor-pointer hover:underline">aangemeld</span> zijn om te chatten.</p> </div> )} </div> ); }
 function AuthModal({ onClose }) { const [isLogin, setIsLogin] = useState(true); const [email, setEmail] = useState(''); const [password, setPassword] = useState(''); const [error, setError] = useState(''); const [loading, setLoading] = useState(false); const [success, setSuccess] = useState(false); const handleSubmit = async (e) => { e.preventDefault(); setLoading(true); setError(''); try { if (isLogin) { await signInWithEmailAndPassword(auth, email, password); } else { await createUserWithEmailAndPassword(auth, email, password); } setSuccess(true); setTimeout(() => onClose(), 1500); } catch (err) { switch (err.code) { case 'auth/invalid-email': setError('Ongeldig e-mailadres.'); break; case 'auth/user-not-found': setError('Geen account gevonden met dit e-mailadres.'); break; case 'auth/wrong-password': setError('Onjuist wachtwoord.'); break; case 'auth/email-already-in-use': setError('Dit e-mailadres is al in gebruik.'); break; case 'auth/weak-password': setError('Wachtwoord moet minstens 6 karakters lang zijn.'); break; default: setError('Er is iets misgegaan. Probeer het opnieuw.'); } } finally { setLoading(false); } }; if (success) { return ( <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-fade-in-fast"> <div className="flex flex-col items-center justify-center w-full max-w-sm p-8 bg-gray-800 rounded-lg shadow-xl"> <CheckCircle size={64} className="text-green-500 mb-4"/> <h2 className="text-2xl font-bold">Succes!</h2> <p className="text-gray-300">Je bent nu ingelogd.</p> </div> </div> ); } return ( <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 animate-fade-in-fast" onClick={onClose}> <div className="w-full max-w-sm p-8 bg-gray-800 rounded-lg shadow-xl" onClick={e => e.stopPropagation()}> <div className="flex items-center justify-between mb-6"> <h2 className="text-2xl font-bold">{isLogin ? 'Aanmelden' : 'Registreren'}</h2> <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={24} /></button> </div> {error && <p className="p-3 mb-4 text-sm text-red-300 rounded-md bg-red-500/20">{error}</p>} <form onSubmit={handleSubmit} className="space-y-4"> <input type="email" placeholder="E-mailadres" value={email} onChange={e => setEmail(e.target.value)} required className="w-full px-4 py-2 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500" /> <input type="password" placeholder="Wachtwoord" value={password} onChange={e => setPassword(e.target.value)} required className="w-full px-4 py-2 text-white bg-gray-700 border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500" /> <button type="submit" disabled={loading} className="w-full px-4 py-2 font-bold text-white transition-colors bg-purple-600 rounded-md hover:bg-purple-700 disabled:bg-gray-500"> {loading ? 'Bezig...' : (isLogin ? 'Aanmelden' : 'Registreren')} </button> </form> <p className="mt-6 text-sm text-center text-gray-400"> {isLogin ? "Nog geen account? " : "Heb je al een account? "} <span onClick={() => {setIsLogin(!isLogin); setError('')}} className="font-bold text-purple-400 cursor-pointer hover:underline"> {isLogin ? 'Registreer hier' : 'Meld je hier aan'} </span> </p> </div> </div> ); }
 
-// Animatiestijlen blijven hetzelfde
 const style = document.createElement('style');
 style.textContent = `
   @keyframes fade-in { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
