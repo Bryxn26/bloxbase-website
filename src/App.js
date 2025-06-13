@@ -41,7 +41,6 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// Tijdelijke mock data voor de favorieten op de profielpagina.
 const mockGamesForProfile = [
     { id: '920587237', title: 'Adopt Me!', icon: 'https://placehold.co/150/7E22CE/FFFFFF?text=A' },
     { id: '1537690962', title: 'Brookhaven RP', icon: 'https://placehold.co/150/16A34A/FFFFFF?text=B' },
@@ -166,6 +165,11 @@ function GameList({ onSelectGame }) {
             if (!response.ok) throw new Error(`HTTP fout! Status: ${response.status}`);
             
             const proxiedData = await response.json();
+            
+            if (!proxiedData.contents) {
+                throw new Error("Proxy gaf geen inhoud terug. De Roblox API is mogelijk onbereikbaar.");
+            }
+
             // De echte data zit in de 'contents' eigenschap als een string, dus we moeten die parsen.
             const robloxData = JSON.parse(proxiedData.contents);
             const initialGames = robloxData.games || [];
